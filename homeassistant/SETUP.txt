@@ -1,0 +1,41 @@
+WHY2025 badge lights panel
+
+1. Use the Cloud key to connect the badge to the same network as Home Assistant.
+2. Add its ESPHome integration using whybadge.local or the IP shown on the badge.
+3. Open Settings > Devices & services > ESPHome, open the badge's configuration
+   options and enable "Allow the device to perform Home Assistant actions".
+4. Create an empty automation in Settings > Automations & scenes. Open its
+   menu > Edit in YAML and replace the contents with whybadge-lights-automation.yaml.
+   Save and enable it. No HA restart or entity selection is required.
+5. Press Circle on the badge. Discovery runs immediately on connection and
+   when the panel opens, and retries every 30 seconds. Ctrl+R requests a refresh.
+
+If Home Assistant reports that esphome.whybadge_sync_lights doesn't exist,
+look for the badge's sync_lights action in Developer tools > Actions and replace
+that action name in the automation. The native node name is whybadge.
+
+Controls:
+  Circle: open Lights
+  Up/Down: select (hold to repeat; pages scroll automatically)
+  Enter or Space: toggle selected light
+  Left/Right: decrease/increase brightness by 10% (hold to repeat)
+  Type: filter by light name, area or entity ID
+  Backspace: edit filter
+  Tab: clear filter
+  Ctrl+R: request discovery
+  Esc: desktop
+  Cross: combined device information and keyboard tester
+
+Lights are sorted by area and name. Unavailable and unknown lights are hidden, and reappear automatically when
+they become available again. On/off-only lights don't offer brightness controls. Light state
+changes are pushed after a 100 ms debounce; a 15 second refresh catches lost
+updates. Selection stays on the same entity when the list changes. A command
+shows immediately as pending, then follows the reported Home Assistant state.
+If no confirmation arrives within 3 seconds, the panel restores reported state.
+
+The panel loads up to 128 light entities within a 30 KB catalog budget. Adding, removing or renaming a light
+automatically changes the catalog without reflashing. Groups also appear if
+Home Assistant exposes them as light entities. No bulk/all-house command is
+bound to a key. Offline/cached data is labelled and controls are disabled.
+
+Verify discovery and physical light changes on your own Home Assistant network.

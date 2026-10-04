@@ -1,0 +1,46 @@
+# Paste this entire automation into Home Assistant's automation YAML editor.
+# ESPHome integration must allow the badge to perform Home Assistant actions.
+# If you renamed the badge in HA, adjust esphome.whybadge_sync_lights below.
+alias: WHY badge - discover and sync lights
+description: Send the badge light names, areas, capabilities and live states automatically.
+triggers:
+  - trigger: event
+    event_type: esphome.whybadge_lights_discover
+  - trigger: event
+    event_type: state_changed
+  - trigger: time_pattern
+    seconds: /15
+  - trigger: homeassistant
+    event: start
+conditions:
+  - condition: template
+    value_template: >-
+      {{ trigger.platform != 'event'
+         or trigger.event.event_type != 'state_changed'
+         or trigger.event.data.entity_id.startswith('light.') }}
+actions:
+  - delay:
+      milliseconds: 100
+  - action: esphome.whybadge_sync_lights
+    data:
+      payload: >-
+        {%- set ns = namespace(lights=[], size=128) -%}
+        {%- for l in (states.light | sort(attribute='entity_id'))[:128] -%}
+          {%- set modes = l.attributes.get('supported_color_modes', []) or [] -%}
+          {%- set dimmable = (modes | reject('in', ['onoff', 'unknown']) | list | length) > 0 -%}
+          {%- set record = {
+            'id': l.entity_id,
+            'name': (l.attributes.get('friendly_name', l.entity_id) | string)[:60],
+            'area': ((area_name(l.entity_id) or '') | string)[:40],
+            'state': l.state,
+            'b': ((l.attributes.get('brightness', 0) or 0) * 100 / 255) | round(0) | int,
+            'dim': dimmable
+          } -%}
+          {%- set cost = (record | to_json(ensure_ascii=True) | length) + 2 -%}
+          {%- if ns.size + cost < 30000 -%}
+            {%- set ns.lights = ns.lights + [record] -%}
+            {%- set ns.size = ns.size + cost -%}
+          {%- endif -%}
+        {%- endfor -%}
+        WHY1:{{ {'lights': ns.lights, 'total': states.light | list | length} | to_json }}
+mode: restart

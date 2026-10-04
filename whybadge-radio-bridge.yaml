@@ -1,0 +1,20 @@
+# Temporary firmware: passes the side USB serial port to the C6 ROM loader.
+# Flash this only to program the radio, then restore whybadge.yaml firmware.
+esphome:
+  name: whybadge-radio-bridge
+esp32:
+  variant: esp32p4
+  engineering_sample: true
+  flash_size: 16MB
+  framework:
+    type: esp-idf
+    version: 5.5.5
+external_components:
+  - source:
+      type: local
+      path: components
+    components: [radio_bridge]
+radio_bridge:
+logger:
+  baud_rate: 0
+  level: NONE

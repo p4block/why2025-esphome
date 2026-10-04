@@ -1,0 +1,424 @@
+# Minimal telemetry desktop on the official WHY2025 badge (production Bono panel).
+# Wi-Fi credentials are entered with the badge keyboard and saved in NVS.
+# This revision requires engineering_sample: true.
+# Confirmed via esptool flash-id: 16MB external flash.
+esphome:
+  name: whybadge
+  friendly_name: WHY2025 Badge
+  min_version: 2026.9.1
+  on_boot:
+    priority: -100
+    then:
+      - lambda: id(badge_keys).start_ui();
+
+external_components:
+  - source:
+      type: local
+      path: components
+    components: [badge_keyboard, badge_hardware]
+
+i2c:
+  id: badge_i2c
+  sda: GPIO18
+  scl: GPIO20
+  frequency: 400kHz
+  scan: true
+
+badge_keyboard:
+  id: badge_keys
+  i2c_id: badge_i2c
+  address: 0x34
+  update_interval: 10ms
+  brightness_number: screen_brightness
+  keyboard_brightness_number: keyboard_brightness
+  hardware_id: badge_peripherals
+  audio_id: badge_tones
+
+esp32:
+  variant: esp32p4
+  engineering_sample: true
+  flash_size: 16MB
+  cpu_frequency: 360MHz
+  framework:
+    type: esp-idf
+    version: 5.5.5
+    sdkconfig_options:
+      CONFIG_USJ_ENABLE_USB_SERIAL_JTAG: "n"
+      CONFIG_ESP_CONSOLE_SECONDARY_NONE: "y"
+      CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG: "n"
+
+# C6 runs the custom radio/backlight.c build, providing screen/keyboard PWM.
+# SDIO wiring from the stock WHY2025 firmware. GPIO12 is C6 EN; GPIO13 is BOOT.
+esp32_hosted:
+  variant: ESP32C6
+  # ESP-Hosted defines active as EN asserted (high), not reset asserted.
+  active_high: true
+  reset_pin: GPIO12
+  clk_pin: GPIO32
+  cmd_pin: GPIO33
+  d0_pin: GPIO28
+  d1_pin: GPIO31
+  d2_pin: GPIO30
+  d3_pin: GPIO29
+  use_psram: true
+
+# Carrier audio nets map through M.2 differently from their P4-side labels:
+# MAX98357A BCLK=26, LRCLK=25, DIN=27, SD_MODE=24.
+i2s_audio:
+  id: badge_audio_bus
+  i2s_bclk_pin: GPIO26
+  i2s_lrclk_pin: GPIO25
+
+speaker:
+  - platform: i2s_audio
+    id: badge_speaker
+    i2s_audio_id: badge_audio_bus
+    dac_type: external
+    i2s_dout_pin: GPIO27
+    channel: mono
+    sample_rate: 16000
+    bits_per_sample: 16bit
+    buffer_duration: 100ms
+
+media_player:
+  - platform: speaker
+    id: badge_player
+    name: Badge audio
+    buffer_size: 250000
+    announcement_pipeline:
+      speaker: badge_speaker
+      format: WAV
+      sample_rate: 16000
+      num_channels: 1
+
+rtttl:
+  id: badge_tones
+  speaker: badge_speaker
+  gain: 0.15
+
+switch:
+  - platform: gpio
+    id: audio_enable
+    name: Audio amplifier
+    pin: GPIO24
+    restore_mode: ALWAYS_ON
+    entity_category: config
+
+motion:
+  - platform: bmi270
+    id: badge_motion
+    i2c_id: badge_i2c
+    address: 0x69
+    update_interval: 250ms
+
+badge_hardware:
+  id: badge_peripherals
+  i2c_id: badge_i2c
+  address: 0x76
+  motion_id: badge_motion
+  update_interval: 10s
+  temperature:
+    name: Environment temperature
+  humidity:
+    name: Humidity
+  pressure:
+    name: Atmospheric pressure
+  gas_resistance:
+    name: Gas resistance
+    entity_category: diagnostic
+  gas_response:
+    name: Relative gas response
+  gas_level:
+    name: Relative gas level
+  gas_trend:
+    name: Gas trend over one minute
+  sd_mounted:
+    name: SD card mounted
+  sd_status:
+    name: SD card status
+  sd_capacity:
+    name: SD card capacity
+
+# Current ESPHome can run the Bluetooth host on P4 through the C6 controller.
+esp32_ble_tracker:
+  scan_parameters:
+    active: false
+    interval: 320ms
+    window: 30ms
+bluetooth_proxy:
+  active: true
+
+wifi:
+  id: badge_wifi
+  reboot_timeout: 0s
+  ap:
+    ssid: WHY2025 Setup
+    password: !secret fallback_ap_password
+
+api:
+  id: badge_api
+  encryption:
+    key: !secret api_encryption_key
+  custom_services: true
+  homeassistant_services: true
+  reboot_timeout: 0s
+
+time:
+  - platform: sntp
+    id: badge_time
+    timezone: Europe/Madrid
+    on_time_sync:
+      then:
+        - script.execute: update_taskbar_clock
+
+script:
+  - id: update_taskbar_clock
+    then:
+      - lvgl.label.update:
+          id: taskbar_clock
+          text: !lambda |-
+            auto now = id(badge_time).now();
+            return now.is_valid() ? now.strftime("%H:%M") : std::string("--:--");
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+sensor:
+  - platform: uptime
+    name: Uptime
+  - platform: wifi_signal
+    name: Wi-Fi signal
+    update_interval: 30s
+  - platform: internal_temperature
+    name: Processor temperature
+    update_interval: 30s
+  - platform: bmi270
+    bmi270_id: badge_motion
+    name: Motion sensor temperature
+  - platform: motion
+    motion_id: badge_motion
+    type: acceleration_x
+    name: Acceleration X
+    filters:
+      - throttle: 1s
+  - platform: motion
+    motion_id: badge_motion
+    type: angular_rate_x
+    name: Gyroscope X
+    filters:
+      - throttle: 1s
+  - platform: motion
+    motion_id: badge_motion
+    type: acceleration_y
+    name: Acceleration Y
+    filters:
+      - throttle: 1s
+  - platform: motion
+    motion_id: badge_motion
+    type: angular_rate_y
+    name: Gyroscope Y
+    filters:
+      - throttle: 1s
+  - platform: motion
+    motion_id: badge_motion
+    type: acceleration_z
+    name: Acceleration Z
+    filters:
+      - throttle: 1s
+  - platform: motion
+    motion_id: badge_motion
+    type: angular_rate_z
+    name: Gyroscope Z
+    filters:
+      - throttle: 1s
+  - platform: motion
+    motion_id: badge_motion
+    type: pitch
+    name: Pitch
+    filters:
+      - throttle: 1s
+  - platform: motion
+    motion_id: badge_motion
+    type: roll
+    name: Roll
+    filters:
+      - throttle: 1s
+
+binary_sensor:
+  - platform: status
+    name: Status
+
+button:
+  - platform: restart
+    name: Restart
+  - platform: template
+    name: Play test tone
+    on_press:
+      - rtttl.play: "badge:d=8,o=5,b=140:c,e,g,c6"
+  - platform: template
+    name: Retry SD card
+    on_press:
+      - lambda: id(badge_peripherals).mount_sd();
+  - platform: template
+    name: Reset gas baseline
+    on_press:
+      - lambda: id(badge_peripherals).reset_gas_baseline();
+  - platform: template
+    name: Calibrate level
+    on_press:
+      - motion.calibrate_level:
+          id: badge_motion
+          save: true
+
+number:
+  - platform: template
+    id: screen_brightness
+    name: Screen brightness
+    unit_of_measurement: "%"
+    icon: mdi:brightness-6
+    min_value: 5
+    max_value: 100
+    step: 5
+    mode: slider
+    optimistic: true
+    restore_value: true
+    initial_value: 100
+    set_action:
+      - lambda: id(badge_keys).set_brightness(x);
+  - platform: template
+    id: keyboard_brightness
+    name: Keyboard brightness
+    unit_of_measurement: "%"
+    icon: mdi:keyboard
+    min_value: 0
+    max_value: 100
+    step: 5
+    mode: slider
+    optimistic: true
+    restore_value: true
+    initial_value: 20
+    set_action:
+      - lambda: id(badge_keys).set_keyboard_brightness(x);
+
+logger:
+  hardware_uart: UART0
+  baud_rate: 115200
+
+interval:
+  - interval: 30s
+    then:
+      - script.execute: update_taskbar_clock
+  - interval: 10s
+    then:
+      - logger.log: "WHY2025 ESPHome serial smoke test is running"
+
+psram:
+  mode: hex
+  speed: 200MHz
+
+esp_ldo:
+  - channel: 3
+    voltage: 2.5V
+
+# Bono panel voltage/gamma/GIP data from BadgeVMS st7703.c/st7703.h.
+# Diagnostic link timing and B2 blanking control from Waveshare 4B / ESPHome
+# WAVESHARE-P4-86-PANEL; matching controller does not establish panel identity.
+# https://github.com/waveshareteam/ESP32-P4-WIFI6-Touch-LCD-4B/blob/main/examples/arduino/libraries/displays/displays_config.h
+# Source: https://gitlab.com/why2025/team-badge/firmware
+# Register sequence adapted from BadgeVMS (GPL-3.0-or-later).
+display:
+  - platform: mipi_dsi
+    id: badge_display
+    model: CUSTOM
+    dimensions:
+      width: 720
+      height: 720
+    reset_pin:
+      number: GPIO17
+      inverted: true
+    lanes: 2
+    lane_bit_rate: 480Mbps
+    pclk_frequency: 38MHz
+    hsync_back_porch: 50
+    hsync_pulse_width: 20
+    hsync_front_porch: 50
+    vsync_back_porch: 20
+    vsync_pulse_width: 4
+    # IDF rounds 38 MHz to 40 MHz: 40 MHz / (840 * 764) = 62.33 Hz.
+    vsync_front_porch: 20
+    # BadgeVMS uses BGR, but ESPHome's rendering path needs RGB on this badge.
+    # Verified visually: BGR swapped red and blue in the desktop's four panes.
+    color_order: RGB
+    color_depth: 16
+    pixel_mode: 16bit
+    auto_clear_enabled: false
+    update_interval: never
+    init_sequence:
+      # Match BadgeVMS reset settling; initialize RGB/RGB565 before vendor commands.
+      - delay 120ms
+      - [0x36, 0x00]
+      - [0x3A, 0x55]
+      - [0xB9, 0xF1, 0x12, 0x83]
+      - [0xB1, 0x00, 0x00, 0x00, 0xDA, 0x80]
+      # BLK_CON=01 drives non-display source outputs to VSSD during blanking.
+      - [0xB2, 0x3C, 0x12, 0x30]
+      - [0xB3, 0x10, 0x10, 0x28, 0x28, 0x03, 0xFF, 0x00, 0x00, 0x00, 0x00]
+      - [0xB4, 0x80]
+      - [0xB5, 0x0A, 0x0A]
+      - [0xB6, 0x97, 0x97]
+      - [0xB8, 0x26, 0x22, 0xF0, 0x63]
+      - [0xBA, 0x31, 0x81, 0x0F, 0xF9, 0x0E, 0x06, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x44, 0x25, 0x00, 0x90, 0x0A, 0x00, 0x00, 0x01, 0x4F, 0x01, 0x00, 0x00, 0x37]
+      - [0xBC, 0x47]
+      - [0xBF, 0x02, 0x11, 0x00]
+      - [0xC0, 0x73, 0x73, 0x50, 0x50, 0x00, 0x00, 0x12, 0x70, 0x00]
+      - [0xC1, 0x43, 0x00, 0x32, 0x32, 0x77, 0xC1, 0xFF, 0xFF, 0xCC, 0xCC, 0x77, 0x77]
+      - [0xC6, 0x82, 0x00, 0xBF, 0xFF, 0x00, 0xFF]
+      - [0xC7, 0xB8, 0x00, 0x0A, 0x00, 0x00, 0x00]
+      - [0xC8, 0x10, 0x40, 0x1E, 0x02]
+      - [0xCC, 0x0B]
+      - [0xE0, 0x00, 0x0B, 0x10, 0x2C, 0x3D, 0x3F, 0x42, 0x3A, 0x07, 0x0D, 0x0F, 0x13, 0x15, 0x13, 0x14, 0x0F, 0x16, 0x00, 0x0B, 0x10, 0x2C, 0x3D, 0x3F, 0x42, 0x3A, 0x07, 0x0D, 0x0F, 0x13, 0x15, 0x13, 0x14, 0x0F, 0x16]
+      - [0xE3, 0x07, 0x07, 0x0B, 0x0B, 0x0B, 0x0B, 0x00, 0x00, 0x00, 0x00, 0xFF, 0x00, 0xC0, 0x10]
+      - [0xE9, 0xC8, 0x10, 0x0A, 0x00, 0x00, 0x80, 0x81, 0x12, 0x31, 0x23, 0x4F, 0x86, 0xA0, 0x00, 0x47, 0x08, 0x00, 0x00, 0x0C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0C, 0x00, 0x00, 0x00, 0x98, 0x02, 0x8B, 0xAF, 0x46, 0x02, 0x88, 0x88, 0x88, 0x88, 0x88, 0x98, 0x13, 0x8B, 0xAF, 0x57, 0x13, 0x88, 0x88, 0x88, 0x88, 0x88, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+      - [0xEA, 0x97, 0x0C, 0x09, 0x09, 0x09, 0x78, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x9F, 0x31, 0x8B, 0xA8, 0x31, 0x75, 0x88, 0x88, 0x88, 0x88, 0x88, 0x9F, 0x20, 0x8B, 0xA8, 0x20, 0x64, 0x88, 0x88, 0x88, 0x88, 0x88, 0x23, 0x00, 0x00, 0x02, 0x62, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x80, 0x81, 0x00, 0x00, 0x00, 0x00]
+      - [0xEF, 0xFF, 0xFF, 0x01]
+      - [0x11]
+      - delay 250ms
+      - [0x29]
+      - delay 50ms
+
+image:
+  - platform: file
+    file: assets/badge-desktop.png
+    id: badge_desktop
+    # RGB888 keeps the rendering path that was verified on this panel.
+    type: RGB
+
+lvgl:
+  displays:
+    - badge_display
+  rotation: 270
+  color_depth: 16
+  byte_order: little_endian
+  buffer_size: 25%
+  default_font: montserrat_16
+  bg_color: 0x080E14
+  widgets:
+    - image:
+        id: desktop_image
+        src: badge_desktop
+        x: 0
+        y: 0
+        pivot_x: 0
+        pivot_y: 0
+        scale: 1
+        antialias: false
+    - label:
+        id: taskbar_clock
+        x: 568
+        y: 24
+        width: 128
+        text: "--:--"
+        text_color: 0x63E8EF
+        text_align: CENTER
+        text_font: montserrat_16
