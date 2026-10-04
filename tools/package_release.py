@@ -64,6 +64,8 @@ def main():
     root = Path(__file__).resolve().parent.parent
     output = root / 'dist/whybadge-esphome'
     # Only replace our generated package, never arbitrary user paths.
+    if output.is_symlink() or (output / ".git").exists():
+        raise SystemExit("Refusing to replace a symlink or Git checkout in dist.")
     if output.exists():
         shutil.rmtree(output)
     output.mkdir(parents=True)
